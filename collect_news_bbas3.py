@@ -15,11 +15,11 @@ from datetime import datetime, timedelta, timezone
 
 import feedparser
 from textblob import TextBlob
-from pymongo import MongoClient
+from pymongo import MongoClient, errors  # garante import de errors
 
 # ---------- CONFIG ----------
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/bigdata")
-MONGO_DB = os.getenv("MONGO_DB", "projeto_bigdata")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+MONGO_DB = os.getenv("MONGO_DB", "bigData")
 MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "projeto_ativos")
 OUTPUT_JSON = "collected_articles_bbas3.json"
 
@@ -41,32 +41,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 # ---------- FUNÇÕES ----------
 
 def google_news_rss(query):
-    """Retorna RSS feed URL para query."""
     q = quote_plus(query)
     return f"https://news.google.com/rss/search?q={q}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
 
 def snippet_from_text(text, max_words=25):
-    """Extrai um snippet do texto real da notícia, limitado a max_words."""
     if not text:
         return ""
-
-    # Quebra o texto em parágrafos e remove os vazios
     paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
-
-    # Se não houver parágrafos, retorna vazio
-    if not paragraphs:
-        return ""
-
-    # Escolhe o primeiro parágrafo com conteúdo mínimo
     for para in paragraphs:
         words = para.split()
-        if len(words) >= 5:  # evita parágrafos muito curtos tipo “Foto” ou “Leia mais”
-            if len(words) <= max_words:
-                return para
-            else:
-                return " ".join(words[:max_words]).rstrip(" .,:;") + "..."
-
-    # fallback: primeiro parágrafo mesmo que curto
+        if len(words) >= 5:
+            return " ".join(words[:max_words]).rstrip(" .,:;") + ("..." if len(words) > max_words else "")
     words = paragraphs[0].split()
     return " ".join(words[:max_words]).rstrip(" .,:;") + "..."
 
@@ -85,10 +70,23 @@ def sentiment_text(text):
 
 def process_feed_entry(e):
     url = e.get("link")
-    title = e.get("title")
-    pub = e.get("published")
-    snippet = snippet_from_text(title)
+    title = e.get("title", "")
+    summary = e.get("summary", "")
+    content = ""
+    if "content" in e and len(e.content) > 0:
+        content = " ".join([c.value for c in e.content if "value" in c])
+
+    text_for_snippet = content or summary or title
+    snippet = snippet_from_text(text_for_snippet)
     sentiment = sentiment_text(snippet)
+
+    pub = ""
+    if "published_parsed" in e and e.published_parsed:
+        try:
+            pub = datetime(*e.published_parsed[:6], tzinfo=timezone.utc).isoformat()
+        except Exception:
+            pub = ""
+
     return {
         "url": url,
         "titulo_noticia": title,
@@ -102,32 +100,46 @@ def collect_from_query(query, max_items=MAX_PER_QUERY, since_years=MAX_YEARS_BAC
     feed_url = google_news_rss(query)
     logging.info(f"Buscando RSS para: {query}")
     feed = feedparser.parse(feed_url)
+
+    if getattr(feed, "bozo", False):
+        logging.warning(f"Erro ao processar RSS: {feed.bozo_exception}")
+
     entries = feed.get("entries", [])[:max_items]
     docs = []
-    cutoff_date = datetime.now() - timedelta(days=365*since_years)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=365*since_years)
+
     for e in entries:
-        pub = None
-        if "published" in e:
+        pub_dt = None
+        if "published_parsed" in e and e.published_parsed:
             try:
-                pub = datetime(*e.published_parsed[:6])
+                pub_dt = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
             except:
                 pass
-        if pub and pub < cutoff_date:
+        if pub_dt and pub_dt < cutoff_date:
             continue
         doc = process_feed_entry(e)
         doc["query"] = query
         docs.append(doc)
         time.sleep(SLEEP_BETWEEN_REQUESTS + random.random()*0.5)
+
     return docs
 
+def get_mongo_collection(uri=MONGO_URI, db_name=MONGO_DB, collection_name=MONGO_COLLECTION):
+    try:
+        client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+        client.admin.command('ping')
+        db = client[db_name]
+        col = db[collection_name]
+        logging.info(f"Conectado ao MongoDB: {uri}, DB: {db_name}, Collection: {collection_name}")
+        return col
+    except errors.ServerSelectionTimeoutError as e:
+        logging.error(f"Não foi possível conectar ao MongoDB: {e}")
+        return None
 
-def save_to_mongo(docs, mongo_uri=MONGO_URI, db=MONGO_DB, collection=MONGO_COLLECTION):
-    client = MongoClient(mongo_uri)
-    db = client[db]
-    col = db[collection]
-
-    if not docs:
-        logging.warning("Nenhum documento para inserir.")
+def save_to_mongo(docs):
+    col = get_mongo_collection()
+    if col is None:
+        logging.error("Coleção MongoDB não disponível. Abortando insert.")
         return
 
     ops = 0
@@ -137,12 +149,10 @@ def save_to_mongo(docs, mongo_uri=MONGO_URI, db=MONGO_DB, collection=MONGO_COLLE
             logging.warning(f"Documento sem URL, pulando: {d}")
             continue
         try:
-            res = col.update_one({"url": url}, {"$set": d}, upsert=True)
-            logging.info(f"Documento inserido/atualizado: {url}")
+            col.update_one({"url": url}, {"$set": d}, upsert=True)
             ops += 1
         except Exception as e:
             logging.error(f"Erro ao salvar documento {url}: {e}")
-
     logging.info(f"Total de documentos inseridos/atualizados: {ops}")
 
 def main():
@@ -160,12 +170,11 @@ def main():
             logging.error(f"Erro ao coletar {q}: {e}")
 
     logging.info(f"Coletados {len(all_docs)} itens únicos. Salvando JSON e MongoDB...")
+
     with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
         json.dump(all_docs, f, ensure_ascii=False, indent=2)
-    try:
-        save_to_mongo(all_docs)
-    except Exception as e:
-        logging.error(f"Erro ao salvar no MongoDB: {e}")
+
+    save_to_mongo(all_docs)
     logging.info("Finalizado.")
 
 if __name__ == "__main__":
