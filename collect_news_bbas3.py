@@ -18,7 +18,7 @@ from textblob import TextBlob
 from pymongo import MongoClient
 
 # ---------- CONFIG ----------
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/bigdata")
 MONGO_DB = os.getenv("MONGO_DB", "projeto_bigdata")
 MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "projeto_ativos")
 OUTPUT_JSON = "collected_articles_bbas3.json"
@@ -120,18 +120,30 @@ def collect_from_query(query, max_items=MAX_PER_QUERY, since_years=MAX_YEARS_BAC
         time.sleep(SLEEP_BETWEEN_REQUESTS + random.random()*0.5)
     return docs
 
-def save_to_mongo(docs):
-    client = MongoClient(MONGO_URI)
-    db = client[MONGO_DB]
-    col = db[MONGO_COLLECTION]
+
+def save_to_mongo(docs, mongo_uri=MONGO_URI, db=MONGO_DB, collection=MONGO_COLLECTION):
+    client = MongoClient(mongo_uri)
+    db = client[db]
+    col = db[collection]
+
+    if not docs:
+        logging.warning("Nenhum documento para inserir.")
+        return
+
     ops = 0
     for d in docs:
         url = d.get("url")
         if not url:
+            logging.warning(f"Documento sem URL, pulando: {d}")
             continue
-        col.update_one({"url": url}, {"$set": d}, upsert=True)
-        ops += 1
-    logging.info(f"Salvo {ops} documentos no MongoDB ({MONGO_DB}/{MONGO_COLLECTION})")
+        try:
+            res = col.update_one({"url": url}, {"$set": d}, upsert=True)
+            logging.info(f"Documento inserido/atualizado: {url}")
+            ops += 1
+        except Exception as e:
+            logging.error(f"Erro ao salvar documento {url}: {e}")
+
+    logging.info(f"Total de documentos inseridos/atualizados: {ops}")
 
 def main():
     all_docs = []
