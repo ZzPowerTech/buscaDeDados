@@ -20,7 +20,7 @@ from pymongo import MongoClient
 # ---------- CONFIG ----------
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 MONGO_DB = os.getenv("MONGO_DB", "projeto_bigdata")
-MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "projeto-ativos")
+MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "projeto_ativos")
 OUTPUT_JSON = "collected_articles_bbas3.json"
 
 QUERIES = [
