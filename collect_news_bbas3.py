@@ -27,10 +27,12 @@ QUERIES = [
     "BBAS3 Banco do Brasil resultados 2025",
     "Banco do Brasil agribusiness inadimplencia 2025",
     "OFAC sanctions Brazil Banco do Brasil",
-    "Magnitsky act Brazil Banco do Brasil"
+    "Magnitsky act Brazil Banco do Brasil",
+    "Banco do Brasil",
+    "BBAS3 B3"
 ]
 
-MAX_PER_QUERY = 20
+MAX_PER_QUERY = 30
 MAX_YEARS_BACK = 5
 SLEEP_BETWEEN_REQUESTS = 1.0
 
@@ -92,8 +94,8 @@ def process_feed_entry(e):
         "titulo_noticia": title,
         "publicada": pub,
         "busca_feita": datetime.now(timezone.utc).isoformat(),
-        "snippet": snippet,
-        "sentiment": sentiment
+        "resumo": snippet,
+        "sentimentos": sentiment
     }
 
 def collect_from_query(query, max_items=MAX_PER_QUERY, since_years=MAX_YEARS_BACK):
