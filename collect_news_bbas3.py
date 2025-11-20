@@ -29,10 +29,20 @@ QUERIES = [
     "OFAC sanctions Brazil Banco do Brasil",
     "Magnitsky act Brazil Banco do Brasil",
     "Banco do Brasil",
-    "BBAS3 B3"
+    "BBAS3 B3",
+    "BBAS3 Banco do Brasil resultados 2024",
+    "Banco do Brasil agribusiness inadimplencia 2024",
+    "BBAS3 Banco do Brasil resultados 2023",
+    "Banco do Brasil agribusiness inadimplencia 2023",
+    "BBAS3 Banco do Brasil resultados 2022",
+    "Banco do Brasil agribusiness inadimplencia 2022",
+    "BBAS3 Banco do Brasil resultados 2021",
+    "Banco do Brasil agribusiness inadimplencia 2021",
+    "BBAS3 Banco do Brasil resultados 2020",
+    "Banco do Brasil agribusiness inadimplencia 2020",
 ]
 
-MAX_PER_QUERY = 30
+MAX_PER_QUERY = 100
 MAX_YEARS_BACK = 5
 SLEEP_BETWEEN_REQUESTS = 1.0
 
@@ -55,18 +65,62 @@ def snippet_from_text(text, max_words=25):
     words = paragraphs[0].split()
     return " ".join(words[:max_words]).rstrip(" .,:;") + "..."
 
-def sentiment_text(text):
+def sentiment_text(text, title=""):
+    """Analisa sentimento com contexto financeiro aprimorado"""
     if not text:
-        return {"polarity": 0.0, "subjectivity": 0.0, "label": "neutral"}
-    tb = TextBlob(text)
-    p = round(tb.sentiment.polarity, 4)
+        return {"polarity": 0.0, "subjectivity": 0.0, "label": "neutral", "confidence": 0.0}
+    
+    # Analisa título e texto completo
+    full_text = f"{title} {text}" if title else text
+    tb = TextBlob(full_text)
+    
+    # Palavras-chave financeiras positivas e negativas (contexto brasileiro)
+    positive_words = [
+        'lucro', 'crescimento', 'alta', 'valorização', 'recuperação', 'expansão',
+        'positivo', 'aumento', 'ganho', 'melhora', 'sucesso', 'recorde', 'superação',
+        'dividendos', 'rentabilidade', 'eficiência', 'otimista', 'sólido'
+    ]
+    negative_words = [
+        'prejuízo', 'queda', 'desvalorização', 'crise', 'inadimplência', 'calote',
+        'negativo', 'perda', 'declínio', 'deterioração', 'sanção', 'multa',
+        'default', 'provisão', 'risco', 'pessimista', 'fraco', 'inadimplente'
+    ]
+    
+    text_lower = full_text.lower()
+    pos_count = sum(1 for word in positive_words if word in text_lower)
+    neg_count = sum(1 for word in negative_words if word in text_lower)
+    
+    # Combina análise TextBlob com keywords
+    base_polarity = tb.sentiment.polarity
+    keyword_adjustment = (pos_count - neg_count) * 0.15  # peso das palavras-chave
+    adjusted_polarity = base_polarity + keyword_adjustment
+    
+    # Limita entre -1 e 1
+    adjusted_polarity = max(-1.0, min(1.0, adjusted_polarity))
+    
+    p = round(adjusted_polarity, 4)
     s = round(tb.sentiment.subjectivity, 4)
-    label = "neutral"
-    if p > 0.1:
+    
+    # Label com thresholds ajustados
+    if p > 0.05:
         label = "positive"
-    elif p < -0.1:
+    elif p < -0.05:
         label = "negative"
-    return {"polarity": p, "subjectivity": s, "label": label}
+    else:
+        label = "neutral"
+    
+    # Confiança baseada na subjetividade e na quantidade de palavras-chave
+    confidence = min(1.0, (abs(p) + (pos_count + neg_count) * 0.1 + s) / 2)
+    confidence = round(confidence, 4)
+    
+    return {
+        "polarity": p,
+        "subjectivity": s,
+        "label": label,
+        "confidence": confidence,
+        "positive_keywords": pos_count,
+        "negative_keywords": neg_count
+    }
 
 def process_feed_entry(e):
     url = e.get("link")
@@ -76,9 +130,12 @@ def process_feed_entry(e):
     if "content" in e and len(e.content) > 0:
         content = " ".join([c.value for c in e.content if "value" in c])
 
-    text_for_snippet = content or summary or title
-    snippet = snippet_from_text(text_for_snippet)
-    sentiment = sentiment_text(snippet)
+    # Usa o texto mais completo disponível para análise
+    text_for_analysis = content or summary or title
+    snippet = snippet_from_text(text_for_analysis)
+    
+    # Analisa sentimento com título e texto completo
+    sentiment = sentiment_text(text_for_analysis, title)
 
     pub = ""
     if "published_parsed" in e and e.published_parsed:

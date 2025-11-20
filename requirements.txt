@@ -1,0 +1,9 @@
+requests
+feedparser
+newspaper3k
+readability-lxml
+beautifulsoup4
+textblob
+pymongo
+tqdm
+python-dateutil
