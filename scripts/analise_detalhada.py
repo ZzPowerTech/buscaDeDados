@@ -5,8 +5,10 @@ import json
 from collections import Counter, defaultdict
 from dateutil import parser as dateparser
 import statistics
+from pathlib import Path
 
-JSON_FILE = "collected_articles_bbas3.json"
+BASE_DIR = Path(__file__).parent.parent
+JSON_FILE = BASE_DIR / "data" / "collected_articles_bbas3.json"
 
 # Carrega os dados
 with open(JSON_FILE, "r", encoding="utf-8") as f:

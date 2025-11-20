@@ -7,3 +7,14 @@ textblob
 pymongo
 tqdm
 python-dateutil
+python-dotenv
+
+# Integração com bancos de dados
+psycopg2-binary
+sqlalchemy
+snowflake-connector-python
+snowflake-sqlalchemy
+
+# API de dados financeiros
+yfinance
+pandas

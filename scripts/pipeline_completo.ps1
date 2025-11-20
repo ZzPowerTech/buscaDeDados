@@ -26,8 +26,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Passo 2: Coletar notícias
-Write-Host "`n📰 [2/4] Coletando notícias (isso pode demorar 15-30 min)..." -ForegroundColor Green
-$startTime = Get-Date
+Write-Host "`n📰 [2/4] Coletando notícias (15-30 min)..." -ForegroundColor Green
+Write-Host "   → Salvando automaticamente em MongoDB, PostgreSQL e Snowflake" -ForegroundColor Gray
 python collect_news_bbas3.py
 $endTime = Get-Date
 $duration = $endTime - $startTime
@@ -38,6 +38,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "✅ Coleta concluída em $($duration.Minutes) minutos e $($duration.Seconds) segundos" -ForegroundColor Green
+Write-Host "   ✅ Dados salvos em MongoDB" -ForegroundColor Gray
+Write-Host "   ✅ Dados salvos em PostgreSQL (dados_mong)" -ForegroundColor Gray
+Write-Host "   ✅ Dados salvos em Snowflake (DADOS_MONG)" -ForegroundColor Gray
 
 # Passo 3: Verificar dados no MongoDB
 Write-Host "`n🗄️  [3/4] Verificando dados inseridos no MongoDB..." -ForegroundColor Green

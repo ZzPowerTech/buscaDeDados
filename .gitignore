@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Dados coletados
+data/collected_articles_bbas3.json
+data/*.json
+data/*.csv
+
+# Configurações sensíveis
+.env
+config_local.ps1
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporários
+*.tmp
+*.bak
+~*
+
+# Arquivos legados (mantidos para histórico)
+collected_articles_bbas3.json

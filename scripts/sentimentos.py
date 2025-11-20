@@ -2,9 +2,11 @@ import json
 from collections import Counter
 from dateutil import parser as dateparser
 import statistics
+from pathlib import Path
 
 # Caminho para o JSON que o seu script gerou
-JSON_FILE = "collected_articles_bbas3.json"
+BASE_DIR = Path(__file__).parent.parent
+JSON_FILE = BASE_DIR / "data" / "collected_articles_bbas3.json"
 
 # Carrega os dados
 with open(JSON_FILE, "r", encoding="utf-8") as f:

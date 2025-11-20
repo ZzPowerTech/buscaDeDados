@@ -3,10 +3,18 @@ Script para verificar os dados inseridos no MongoDB
 """
 from pymongo import MongoClient, errors
 import os
+import sys
+from pathlib import Path
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-MONGO_DB = os.getenv("MONGO_DB", "bigData")
-MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "projeto_ativos")
+# Adicionar diretório raiz ao path para imports
+root_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(root_dir))
+
+from src.config import settings
+
+MONGO_URI = settings.mongo_uri
+MONGO_DB = settings.mongo_db
+MONGO_COLLECTION = settings.mongo_collection
 
 try:
     client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)

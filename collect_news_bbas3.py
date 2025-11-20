@@ -1,28 +1,36 @@
 """
-Coleta notícias do Google News RSS sobre BBAS3/Banco do Brasil,
-gera snippet, analisa sentimento e salva JSON + MongoDB.
+Coleta notícias do Google News RSS sobre BBAS3/Banco do Brasil
+com análise de sentimento e armazenamento multi-database.
 
-Respeita robots.txt e não contorna paywalls.
+Arquitetura SOLID/Clean Code
+Usa variáveis de ambiente (.env)
 """
 
-import os
 import json
 import logging
-import random
-import time
-from urllib.parse import quote_plus
-from datetime import datetime, timedelta, timezone
+from typing import List
 
-import feedparser
-from textblob import TextBlob
-from pymongo import MongoClient, errors  # garante import de errors
+from src.config import settings
+from src.models import NewsArticle
+from src.services import (
+    SentimentAnalysisService,
+    NewsCollectorService,
+    NewsPersistenceService
+)
+from src.repositories import (
+    MongoDBRepository,
+    PostgreSQLRepository,
+    SnowflakeRepository
+)
 
-# ---------- CONFIG ----------
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-MONGO_DB = os.getenv("MONGO_DB", "bigData")
-MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "projeto_ativos")
-OUTPUT_JSON = "collected_articles_bbas3.json"
+# Configuração de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+logger = logging.getLogger(__name__)
 
+# Queries de busca
 QUERIES = [
     "BBAS3 Banco do Brasil resultados 2025",
     "Banco do Brasil agribusiness inadimplencia 2025",
@@ -42,197 +50,122 @@ QUERIES = [
     "Banco do Brasil agribusiness inadimplencia 2020",
 ]
 
-MAX_PER_QUERY = 100
-MAX_YEARS_BACK = 5
-SLEEP_BETWEEN_REQUESTS = 1.0
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+def save_json_local(articles: List[NewsArticle], filename: str):
+    """Salva artigos em arquivo JSON local"""
+    data = [article.to_dict() for article in articles]
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    logger.info(f"✅ JSON salvo: {filename}")
 
-# ---------- FUNÇÕES ----------
-
-def google_news_rss(query):
-    q = quote_plus(query)
-    return f"https://news.google.com/rss/search?q={q}&hl=pt-BR&gl=BR&ceid=BR:pt-419"
-
-def snippet_from_text(text, max_words=25):
-    if not text:
-        return ""
-    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
-    for para in paragraphs:
-        words = para.split()
-        if len(words) >= 5:
-            return " ".join(words[:max_words]).rstrip(" .,:;") + ("..." if len(words) > max_words else "")
-    words = paragraphs[0].split()
-    return " ".join(words[:max_words]).rstrip(" .,:;") + "..."
-
-def sentiment_text(text, title=""):
-    """Analisa sentimento com contexto financeiro aprimorado"""
-    if not text:
-        return {"polarity": 0.0, "subjectivity": 0.0, "label": "neutral", "confidence": 0.0}
-    
-    # Analisa título e texto completo
-    full_text = f"{title} {text}" if title else text
-    tb = TextBlob(full_text)
-    
-    # Palavras-chave financeiras positivas e negativas (contexto brasileiro)
-    positive_words = [
-        'lucro', 'crescimento', 'alta', 'valorização', 'recuperação', 'expansão',
-        'positivo', 'aumento', 'ganho', 'melhora', 'sucesso', 'recorde', 'superação',
-        'dividendos', 'rentabilidade', 'eficiência', 'otimista', 'sólido'
-    ]
-    negative_words = [
-        'prejuízo', 'queda', 'desvalorização', 'crise', 'inadimplência', 'calote',
-        'negativo', 'perda', 'declínio', 'deterioração', 'sanção', 'multa',
-        'default', 'provisão', 'risco', 'pessimista', 'fraco', 'inadimplente'
-    ]
-    
-    text_lower = full_text.lower()
-    pos_count = sum(1 for word in positive_words if word in text_lower)
-    neg_count = sum(1 for word in negative_words if word in text_lower)
-    
-    # Combina análise TextBlob com keywords
-    base_polarity = tb.sentiment.polarity
-    keyword_adjustment = (pos_count - neg_count) * 0.15  # peso das palavras-chave
-    adjusted_polarity = base_polarity + keyword_adjustment
-    
-    # Limita entre -1 e 1
-    adjusted_polarity = max(-1.0, min(1.0, adjusted_polarity))
-    
-    p = round(adjusted_polarity, 4)
-    s = round(tb.sentiment.subjectivity, 4)
-    
-    # Label com thresholds ajustados
-    if p > 0.05:
-        label = "positive"
-    elif p < -0.05:
-        label = "negative"
-    else:
-        label = "neutral"
-    
-    # Confiança baseada na subjetividade e na quantidade de palavras-chave
-    confidence = min(1.0, (abs(p) + (pos_count + neg_count) * 0.1 + s) / 2)
-    confidence = round(confidence, 4)
-    
-    return {
-        "polarity": p,
-        "subjectivity": s,
-        "label": label,
-        "confidence": confidence,
-        "positive_keywords": pos_count,
-        "negative_keywords": neg_count
-    }
-
-def process_feed_entry(e):
-    url = e.get("link")
-    title = e.get("title", "")
-    summary = e.get("summary", "")
-    content = ""
-    if "content" in e and len(e.content) > 0:
-        content = " ".join([c.value for c in e.content if "value" in c])
-
-    # Usa o texto mais completo disponível para análise
-    text_for_analysis = content or summary or title
-    snippet = snippet_from_text(text_for_analysis)
-    
-    # Analisa sentimento com título e texto completo
-    sentiment = sentiment_text(text_for_analysis, title)
-
-    pub = ""
-    if "published_parsed" in e and e.published_parsed:
-        try:
-            pub = datetime(*e.published_parsed[:6], tzinfo=timezone.utc).isoformat()
-        except Exception:
-            pub = ""
-
-    return {
-        "url": url,
-        "titulo_noticia": title,
-        "publicada": pub,
-        "busca_feita": datetime.now(timezone.utc).isoformat(),
-        "resumo": snippet,
-        "sentimentos": sentiment
-    }
-
-def collect_from_query(query, max_items=MAX_PER_QUERY, since_years=MAX_YEARS_BACK):
-    feed_url = google_news_rss(query)
-    logging.info(f"Buscando RSS para: {query}")
-    feed = feedparser.parse(feed_url)
-
-    if getattr(feed, "bozo", False):
-        logging.warning(f"Erro ao processar RSS: {feed.bozo_exception}")
-
-    entries = feed.get("entries", [])[:max_items]
-    docs = []
-    cutoff_date = datetime.now(timezone.utc) - timedelta(days=365*since_years)
-
-    for e in entries:
-        pub_dt = None
-        if "published_parsed" in e and e.published_parsed:
-            try:
-                pub_dt = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
-            except:
-                pass
-        if pub_dt and pub_dt < cutoff_date:
-            continue
-        doc = process_feed_entry(e)
-        doc["query"] = query
-        docs.append(doc)
-        time.sleep(SLEEP_BETWEEN_REQUESTS + random.random()*0.5)
-
-    return docs
-
-def get_mongo_collection(uri=MONGO_URI, db_name=MONGO_DB, collection_name=MONGO_COLLECTION):
-    try:
-        client = MongoClient(uri, serverSelectionTimeoutMS=5000)
-        client.admin.command('ping')
-        db = client[db_name]
-        col = db[collection_name]
-        logging.info(f"Conectado ao MongoDB: {uri}, DB: {db_name}, Collection: {collection_name}")
-        return col
-    except errors.ServerSelectionTimeoutError as e:
-        logging.error(f"Não foi possível conectar ao MongoDB: {e}")
-        return None
-
-def save_to_mongo(docs):
-    col = get_mongo_collection()
-    if col is None:
-        logging.error("Coleção MongoDB não disponível. Abortando insert.")
-        return
-
-    ops = 0
-    for d in docs:
-        url = d.get("url")
-        if not url:
-            logging.warning(f"Documento sem URL, pulando: {d}")
-            continue
-        try:
-            col.update_one({"url": url}, {"$set": d}, upsert=True)
-            ops += 1
-        except Exception as e:
-            logging.error(f"Erro ao salvar documento {url}: {e}")
-    logging.info(f"Total de documentos inseridos/atualizados: {ops}")
 
 def main():
-    all_docs = []
+    """Função principal de execução"""
+    logger.info("="*60)
+    logger.info("🚀 INICIANDO COLETA DE NOTÍCIAS BBAS3")
+    logger.info("="*60)
+    
+    # Inicializa serviços
+    sentiment_service = SentimentAnalysisService()
+    
+    collector = NewsCollectorService(
+        sentiment_service=sentiment_service,
+        max_per_query=settings.app.max_articles_per_query,
+        max_years_back=settings.app.max_years_back,
+        sleep_between=settings.app.sleep_between_requests
+    )
+    
+    # Inicializa repositórios
+    repositories = []
+    
+    if settings.mongodb.enabled:
+        repositories.append(MongoDBRepository(
+            uri=settings.mongodb.uri,
+            database=settings.mongodb.database,
+            collection=settings.mongodb.collection
+        ))
+    
+    if settings.postgresql.enabled:
+        repositories.append(PostgreSQLRepository(
+            user=settings.postgresql.user,
+            password=settings.postgresql.password,
+            host=settings.postgresql.host,
+            port=settings.postgresql.port,
+            database=settings.postgresql.database,
+            table=settings.postgresql.table_name
+        ))
+    
+    if settings.snowflake.enabled:
+        repositories.append(SnowflakeRepository(
+            user=settings.snowflake.user,
+            password=settings.snowflake.password,
+            account=settings.snowflake.account,
+            warehouse=settings.snowflake.warehouse,
+            database=settings.snowflake.database,
+            schema=settings.snowflake.schema,
+            table=settings.snowflake.table_name
+        ))
+    
+    persistence = NewsPersistenceService(repositories)
+    
+    # Coleta notícias de todas as queries
+    all_articles = []
     seen_urls = set()
-    for q in QUERIES:
+    
+    for query in QUERIES:
         try:
-            docs = collect_from_query(q)
-            for d in docs:
-                url = d.get("url")
-                if url and url not in seen_urls:
-                    seen_urls.add(url)
-                    all_docs.append(d)
+            articles = collector.collect_from_query(query)
+            
+            # Remove duplicatas por URL
+            for article in articles:
+                if article.url not in seen_urls:
+                    seen_urls.add(article.url)
+                    all_articles.append(article)
+        
         except Exception as e:
-            logging.error(f"Erro ao coletar {q}: {e}")
+            logger.error(f"❌ Erro ao coletar query '{query}': {e}")
+    
+    logger.info(f"\n📊 Total de artigos únicos coletados: {len(all_articles)}")
+    
+    # Salva JSON local
+    if settings.app.save_json_local:
+        logger.info("\n" + "="*60)
+        logger.info("💾 SALVANDO JSON LOCAL")
+        logger.info("="*60)
+        save_json_local(all_articles, settings.app.json_output_file)
+    
+    # Salva em bancos de dados
+    if repositories:
+        logger.info("\n" + "="*60)
+        logger.info("💾 SALVANDO EM BANCOS DE DADOS")
+        logger.info("="*60)
+        
+        results = persistence.save_all(all_articles)
+        
+        for repo_name, count in results.items():
+            status = "✅" if count > 0 else "❌"
+            logger.info(f"{status} {repo_name}: {count} artigos salvos")
+    
+    # Resumo final
+    logger.info("\n" + "="*60)
+    logger.info("✅ COLETA FINALIZADA COM SUCESSO!")
+    logger.info("="*60)
+    logger.info(f"📊 Total de notícias: {len(all_articles)}")
+    
+    if settings.mongodb.enabled:
+        logger.info(f"💾 MongoDB: {settings.mongodb.database}.{settings.mongodb.collection}")
+    
+    if settings.postgresql.enabled:
+        logger.info(f"💾 PostgreSQL: {settings.postgresql.database}.{settings.postgresql.table_name}")
+    
+    if settings.snowflake.enabled:
+        logger.info(f"💾 Snowflake: {settings.snowflake.database}.{settings.snowflake.schema}.{settings.snowflake.table_name}")
+    
+    if settings.app.save_json_local:
+        logger.info(f"📄 JSON: {settings.app.json_output_file}")
+    
+    logger.info("="*60)
 
-    logging.info(f"Coletados {len(all_docs)} itens únicos. Salvando JSON e MongoDB...")
-
-    with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
-        json.dump(all_docs, f, ensure_ascii=False, indent=2)
-
-    save_to_mongo(all_docs)
-    logging.info("Finalizado.")
 
 if __name__ == "__main__":
     main()
