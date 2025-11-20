@@ -45,13 +45,13 @@ for i, row in enumerate(cursor.fetchall(), 1):
 print("\n📊 Análise de dados:")
 print("=" * 80)
 
-cursor.execute("SELECT DISTINCT query FROM DADOS_MONG")
+cursor.execute('SELECT DISTINCT "query" FROM DADOS_MONG')
 queries = cursor.fetchall()
 print(f"\nQueries únicas: {len(queries)}")
 for q in queries[:5]:
     print(f"  • {q[0]}")
 
-cursor.execute("SELECT DISTINCT label FROM DADOS_MONG")
+cursor.execute('SELECT DISTINCT "label" FROM DADOS_MONG')
 labels = cursor.fetchall()
 print(f"\nLabels únicas: {len(labels)}")
 for l in labels:
@@ -60,12 +60,12 @@ for l in labels:
 # Ver distribuição de polaridade e subjetividade
 cursor.execute("""
     SELECT 
-        ROUND(AVG(polarity), 2) as polarity_media,
-        ROUND(MIN(polarity), 2) as polarity_min,
-        ROUND(MAX(polarity), 2) as polarity_max,
-        ROUND(AVG(subjectivity), 2) as subjectivity_media,
-        ROUND(MIN(subjectivity), 2) as subjectivity_min,
-        ROUND(MAX(subjectivity), 2) as subjectivity_max
+        ROUND(AVG("polarity"), 2) as polarity_media,
+        ROUND(MIN("polarity"), 2) as polarity_min,
+        ROUND(MAX("polarity"), 2) as polarity_max,
+        ROUND(AVG("subjectivity"), 2) as subjectivity_media,
+        ROUND(MIN("subjectivity"), 2) as subjectivity_min,
+        ROUND(MAX("subjectivity"), 2) as subjectivity_max
     FROM DADOS_MONG
 """)
 stats = cursor.fetchone()

@@ -80,30 +80,17 @@ def main():
     
     if settings.mongodb.enabled:
         repositories.append(MongoDBRepository(
-            uri=settings.mongodb.uri,
-            database=settings.mongodb.database,
-            collection=settings.mongodb.collection
+            config=settings.mongodb
         ))
     
     if settings.postgresql.enabled:
         repositories.append(PostgreSQLRepository(
-            user=settings.postgresql.user,
-            password=settings.postgresql.password,
-            host=settings.postgresql.host,
-            port=settings.postgresql.port,
-            database=settings.postgresql.database,
-            table=settings.postgresql.table_name
+            config=settings.postgresql
         ))
     
     if settings.snowflake.enabled:
         repositories.append(SnowflakeRepository(
-            user=settings.snowflake.user,
-            password=settings.snowflake.password,
-            account=settings.snowflake.account,
-            warehouse=settings.snowflake.warehouse,
-            database=settings.snowflake.database,
-            schema=settings.snowflake.schema,
-            table=settings.snowflake.table_name
+            config=settings.snowflake
         ))
     
     persistence = NewsPersistenceService(repositories)

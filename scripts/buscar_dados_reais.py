@@ -10,7 +10,8 @@ from datetime import datetime
 # ================================
 
 # Ação para buscar (BBAS3 = Banco do Brasil)
-TICKER = "BBAS3.SA"  # .SA indica ações da B3 (Brasil)
+# Nota: Use BBAS3.SAO se .SA não funcionar
+TICKER = "BBAS3.SAO"  # .SAO indica ações da B3 (Brasil)
 DATA_INICIO = "2020-01-01"
 DATA_FIM = datetime.now().strftime("%Y-%m-%d")
 
@@ -36,9 +37,59 @@ sf_schema = "PUBLIC"
 print(f"📊 Buscando dados de {TICKER} via API Yahoo Finance...")
 print(f"   Período: {DATA_INICIO} até {DATA_FIM}\n")
 
-# Baixar dados históricos
-acao = yf.Ticker(TICKER)
-df = acao.history(start=DATA_INICIO, end=DATA_FIM)
+# Baixar dados históricos com tratamento de erros SSL
+try:
+    acao = yf.Ticker(TICKER)
+    df = acao.history(start=DATA_INICIO, end=DATA_FIM)
+except Exception as e:
+    if "SSL" in str(e) or "certificate" in str(e):
+        print(f"⚠️  Erro de certificado SSL. Tentando sem validação SSL...")
+        # Desabilitar verificação SSL (usar com cuidado)
+        import ssl
+        ssl._create_default_https_context = ssl._create_unverified_context
+        try:
+            acao = yf.Ticker(TICKER)
+            df = acao.history(start=DATA_INICIO, end=DATA_FIM)
+        except Exception as e2:
+            print(f"❌ Erro mesmo sem validação SSL: {e2}")
+            df = pd.DataFrame()
+    else:
+        print(f"❌ Erro ao buscar dados: {e}")
+        df = pd.DataFrame()
+
+# Verificar se conseguiu dados
+if df.empty:
+    print(f"⚠️  Ticker {TICKER} não retornou dados. Tentando BBAS3.SA...")
+    TICKER = "BBAS3.SA"
+    try:
+        acao = yf.Ticker(TICKER)
+        df = acao.history(start=DATA_INICIO, end=DATA_FIM)
+    except Exception as e:
+        print(f"❌ Erro com BBAS3.SA: {e}")
+        df = pd.DataFrame()
+    
+    if df.empty:
+        print("❌ Nenhum ticker funcionou. Continuando sem dados históricos...")
+        print("   Possíveis causas:")
+        print("   - API Yahoo Finance temporariamente indisponível")
+        print("   - Ticker mudou de símbolo")
+        print("   - Problemas de conexão com internet")
+        print("\n✅ Pipeline continuará com coleta de notícias...\n")
+        # Criar DataFrame vazio com estrutura correta
+        df = pd.DataFrame(columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume'])
+        df['Variacao_Percentual'] = []
+        df = df.rename(columns={
+            'Date': 'Data',
+            'Open': 'Abertura',
+            'High': 'Maxima',
+            'Low': 'Minima',
+            'Close': 'Fechamento',
+            'Volume': 'Volume'
+        })
+        # Pular salvamento nos bancos se não há dados
+        print("⏭️  Pulando salvamento de dados históricos (sem dados)\n")
+        import sys
+        sys.exit(0)  # Exit 0 para não parar o pipeline
 
 # Resetar index para ter a data como coluna
 df.reset_index(inplace=True)

@@ -12,9 +12,9 @@ sys.path.insert(0, str(root_dir))
 
 from src.config import settings
 
-MONGO_URI = settings.mongo_uri
-MONGO_DB = settings.mongo_db
-MONGO_COLLECTION = settings.mongo_collection
+MONGO_URI = settings.mongodb.uri
+MONGO_DB = settings.mongodb.database
+MONGO_COLLECTION = settings.mongodb.collection
 
 try:
     client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
